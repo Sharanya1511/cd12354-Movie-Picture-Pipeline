@@ -8,54 +8,42 @@ on:
 jobs:
   lint:
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: starter/backend/package-lock.json
-
       - run: npm ci
         working-directory: ./starter/backend
-
       - run: npm run lint
         working-directory: ./starter/backend
 
   test:
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: starter/backend/package-lock.json
-
       - run: npm ci
         working-directory: ./starter/backend
-
       - run: npm test
         working-directory: ./starter/backend
 
   build:
     needs: [lint, test]
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: starter/backend/package-lock.json
-
       - run: npm ci
         working-directory: ./starter/backend
-
       - run: docker build -t backend ./starter/backend
