@@ -8,6 +8,7 @@ on:
 env:
   AWS_REGION: us-east-1
   ECR_REPOSITORY: frontend
+  EKS_CLUSTER: movie-cluster
 
 jobs:
   lint:
@@ -18,11 +19,11 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: frontend/package-lock.json
+          cache-dependency-path: starter/frontend/package-lock.json
       - run: npm ci
-        working-directory: frontend
+        working-directory: ./starter/frontend
       - run: npm run lint
-        working-directory: frontend
+        working-directory: ./starter/frontend
 
   test:
     runs-on: ubuntu-latest
@@ -32,20 +33,18 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: frontend/package-lock.json
+          cache-dependency-path: starter/frontend/package-lock.json
       - run: npm ci
-        working-directory: frontend
+        working-directory: ./starter/frontend
       - run: npm test
-        working-directory: frontend
+        working-directory: ./starter/frontend
 
-  build-and-deploy:
+  build:
     needs: [lint, test]
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v4
-
-      - uses: actions/configure-aws-credentials@v4
+      - uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -53,19 +52,27 @@ jobs:
 
       - uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Build Docker image
-        run: |
+      - run: |
           docker build \
             --build-arg REACT_APP_MOVIE_API_URL=${{ secrets.REACT_APP_MOVIE_API_URL }} \
-            -t $ECR_REPOSITORY:latest frontend
+            -t $ECR_REPOSITORY ./starter/frontend
+          docker tag $ECR_REPOSITORY:latest \
+            ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/$ECR_REPOSITORY:latest
+          docker push \
+            ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/$ECR_REPOSITORY:latest
 
-      - name: Tag & Push
-        run: |
-          docker tag $ECR_REPOSITORY:latest ${{ secrets.ECR_REGISTRY }}/$ECR_REPOSITORY:latest
-          docker push ${{ secrets.ECR_REGISTRY }}/$ECR_REPOSITORY:latest
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
 
-      - name: Update kubeconfig
-        run: aws eks update-kubeconfig --region us-east-1 --name cluster
-
-      - name: Deploy
-        run: kubectl apply -f k8s/frontend-deployment.yaml
+      - run: |
+          aws eks update-kubeconfig --name $EKS_CLUSTER --region $AWS_REGION
+          kubectl apply -f starter/frontend/k8s
+          kubectl rollout restart deployment frontend
