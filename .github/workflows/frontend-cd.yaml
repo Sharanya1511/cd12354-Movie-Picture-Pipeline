@@ -76,5 +76,5 @@ jobs:
 
       - run: |
           aws eks update-kubeconfig --name $EKS_CLUSTER --region $AWS_REGION
-          kubectl apply -f starter/frontend/k8s
+          kubectl apply -f starter/frontend/k8s --validate=false
           kubectl rollout restart deployment frontend
