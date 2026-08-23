@@ -8,9 +8,9 @@ on:
   workflow_dispatch:
 
 env:
-  AWS_REGION: ${{ secrets.AWS_REGION }}
-  ECR_REPOSITORY: ${{ secrets.ECR_BACKEND_REPO }}
-  EKS_CLUSTER: ${{ secrets.EKS_CLUSTER_NAME }}
+  AWS_REGION: us-east-1
+  ECR_REPOSITORY: backend
+  EKS_CLUSTER: cluster
 
 jobs:
   lint:
