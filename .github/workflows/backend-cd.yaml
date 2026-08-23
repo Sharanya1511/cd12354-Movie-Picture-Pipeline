@@ -20,9 +20,11 @@ jobs:
         working-directory: starter/backend
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.10"
+
       - run: pip install pipenv
       - run: pipenv install --dev
       - run: pipenv run lint
@@ -34,9 +36,11 @@ jobs:
         working-directory: starter/backend
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.10"
+
       - run: pip install pipenv
       - run: pipenv install --dev
       - run: pipenv run test
@@ -49,6 +53,7 @@ jobs:
     defaults:
       run:
         working-directory: starter/backend
+
     steps:
       - uses: actions/checkout@v4
 
@@ -62,13 +67,16 @@ jobs:
       - uses: aws-actions/amazon-ecr-login@v2
 
       - name: Build Docker image
-        run: docker build -t $ECR_REPOSITORY:${{ github.sha }} .
+        run: |
+          docker build -t ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPOSITORY:${{ github.sha }} .
 
       - name: Push Docker image
-        run: docker push $ECR_REPOSITORY:${{ github.sha }}
+        run: |
+          docker push ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPOSITORY:${{ github.sha }}
 
       - id: image
-        run: echo "image=$ECR_REPOSITORY:${{ github.sha }}" >> $GITHUB_OUTPUT
+        run: |
+          echo "image=${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPOSITORY:${{ github.sha }}" >> $GITHUB_OUTPUT
 
   deploy:
     needs: build
@@ -76,6 +84,7 @@ jobs:
     defaults:
       run:
         working-directory: starter/backend/k8s
+
     steps:
       - uses: actions/checkout@v4
 
