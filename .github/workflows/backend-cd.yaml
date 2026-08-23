@@ -97,4 +97,5 @@ jobs:
       - name: Deploy
         run: |
           kustomize edit set image backend=${{ needs.build.outputs.image }}
-          kustomize build | kubectl apply -f -
+          kubectl apply -k .
+          kubectl rollout restart deployment backend
