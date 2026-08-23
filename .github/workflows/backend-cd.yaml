@@ -2,109 +2,147 @@ name: Backend Continuous Deployment
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
     paths:
-      - "starter/backend/**"
+      - 'starter/backend/**'
+      - '.github/workflows/backend-cd.yaml'
   workflow_dispatch:
 
-env:
-  AWS_REGION: us-east-1
-  ECR_REPOSITORY: backend
-  EKS_CLUSTER: cluster
+permissions:
+  contents: read
 
 jobs:
+
   lint:
+    name: Backend Lint
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: starter/backend
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
+      - name: Setup Python
+        uses: actions/setup-python@v5
         with:
-          python-version: "3.10"
+          python-version: "3.10.6"
+          cache: pipenv
+          cache-dependency-path: starter/backend/Pipfile.lock
 
-      - run: pip install pipenv
-      - run: pipenv install --dev
-      - run: pipenv run lint
+      - name: Install dependencies
+        run: |
+          pip install pipenv
+          pipenv install --dev
+
+      - name: Run lint
+        run: pipenv run lint
 
   test:
+    name: Backend Tests
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: starter/backend
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
+      - name: Setup Python
+        uses: actions/setup-python@v5
         with:
-          python-version: "3.10"
+          python-version: "3.10.6"
+          cache: pipenv
+          cache-dependency-path: starter/backend/Pipfile.lock
 
-      - run: pip install pipenv
-      - run: pipenv install --dev
-      - run: pipenv run test
+      - name: Install dependencies
+        run: |
+          pip install pipenv
+          pipenv install --dev
 
-  build:
+      - name: Run tests
+        run: pipenv run test
+
+  build-and-deploy:
+    name: Build and Deploy Backend
+    runs-on: ubuntu-latest
     needs: [lint, test]
-    runs-on: ubuntu-latest
-    outputs:
-      image: ${{ steps.image.outputs.image }}
-    defaults:
-      run:
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build backend Docker image
         working-directory: starter/backend
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - uses: aws-actions/amazon-ecr-login@v2
-
-      - name: Build Docker image
         run: |
-          docker build -t ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPOSITORY:${{ github.sha }} .
+          docker build \
+            --tag ${{ steps.login-ecr.outputs.registry }}/backend:${{ github.sha }} \
+            .
 
-      - name: Push Docker image
+      - name: Push backend Docker image
         run: |
-          docker push ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPOSITORY:${{ github.sha }}
+          docker push ${{ steps.login-ecr.outputs.registry }}/backend:${{ github.sha }}
 
-      - id: image
+      - name: Configure kubectl for EKS
+        env:
+          EKS_ENDPOINT: ${{ secrets.EKS_ENDPOINT }}
+          EKS_CA: ${{ secrets.EKS_CA }}
         run: |
-          echo "image=${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPOSITORY:${{ github.sha }}" >> $GITHUB_OUTPUT
+          mkdir -p ~/.kube
 
-  deploy:
-    needs: build
-    runs-on: ubuntu-latest
-    defaults:
-      run:
+          cat > ~/.kube/config <<EOF
+          apiVersion: v1
+          kind: Config
+          clusters:
+            - name: cluster
+              cluster:
+                server: ${EKS_ENDPOINT}
+                certificate-authority-data: ${EKS_CA}
+          contexts:
+            - name: cluster
+              context:
+                cluster: cluster
+                user: github-action-user
+          current-context: cluster
+          users:
+            - name: github-action-user
+              user:
+                exec:
+                  apiVersion: client.authentication.k8s.io/v1beta1
+                  command: aws
+                  args:
+                    - eks
+                    - get-token
+                    - --cluster-name
+                    - cluster
+                    - --region
+                    - us-east-1
+          EOF
+
+      - name: Set backend image
         working-directory: starter/backend/k8s
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Update kubeconfig
-        run: aws eks update-kubeconfig --name $EKS_CLUSTER --region $AWS_REGION
-
-      - name: Install Kustomize
         run: |
-          curl -s https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh | bash
-          sudo mv kustomize /usr/local/bin/
+          kustomize edit set image backend=${{ steps.login-ecr.outputs.registry }}/backend:${{ github.sha }}
 
-      - name: Deploy
+      - name: Deploy to Kubernetes
+        working-directory: starter/backend/k8s
         run: |
-          kustomize edit set image backend=${{ needs.build.outputs.image }}
-          kustomize build . | kubectl apply --validate=false -f -
-          kubectl rollout restart deployment backend
+          kubectl apply -k .
+
+      - name: Verify deployment
+        run: |
+          kubectl rollout status deployment/backend --timeout=180s
